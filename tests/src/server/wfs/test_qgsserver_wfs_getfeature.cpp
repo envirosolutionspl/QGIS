@@ -21,6 +21,9 @@
 #include "qgsbufferserverresponse.h"
 #include "qgsserverinterfaceimpl.h"
 #include "qgswfsgetfeature.h"
+#include "qgswfsutils.h"
+
+#include <QDomDocument>
 
 /**
  * \ingroup UnitTests
@@ -35,6 +38,7 @@ class TestQgsServerWfsGetFeature : public QObject
     void cleanupTestCase();
 
     void nullValueProperty();
+    void domDocumentToByteArray();
 };
 
 void TestQgsServerWfsGetFeature::initTestCase()
@@ -145,6 +149,63 @@ void TestQgsServerWfsGetFeature::nullValueProperty()
   //   - <qgs:geometry>
   //   - <qgs:name0>0</qgs:name0>
   QCOMPARE( gml3Children.count(), 3 );
+}
+
+void TestQgsServerWfsGetFeature::domDocumentToByteArray()
+{
+  // elements with and without namespace, attributes, texts with the characters which are escaped,
+  // non ASCII characters, a surrogate pair, a lone surrogate and non characters
+  QDomDocument doc;
+  QDomElement member = doc.createElement( QStringLiteral( "gml:featureMember" ) );
+  doc.appendChild( member );
+  QDomElement feature = doc.createElement( QStringLiteral( "qgs:layer" ) );
+  feature.setAttribute( QStringLiteral( "gml:id" ), QStringLiteral( "layer.1" ) );
+  feature.setAttribute( QStringLiteral( "note" ), QStringLiteral( "a \"quoted\" <value> & a tab\t, a line\nbreak, \u017c\u00f3\u0142w" ) );
+  member.appendChild( feature );
+  QDomElement geometry = doc.createElementNS( QStringLiteral( "http://www.opengis.net/gml" ), QStringLiteral( "gml:Point" ) );
+  geometry.setAttribute( QStringLiteral( "srsName" ), QStringLiteral( "EPSG:4326" ) );
+  QDomElement pos = doc.createElementNS( QStringLiteral( "http://www.opengis.net/gml" ), QStringLiteral( "gml:pos" ) );
+  pos.setAttribute( QStringLiteral( "srsDimension" ), QStringLiteral( "2" ) );
+  pos.appendChild( doc.createTextNode( QStringLiteral( "18.5 50.25" ) ) );
+  geometry.appendChild( pos );
+  feature.appendChild( geometry );
+  feature.appendChild( doc.createElement( QStringLiteral( "qgs:empty" ) ) );
+
+  const QStringList texts {
+    QStringLiteral( "plain text" ),
+    QStringLiteral( "<tag> & \"quotes\" and apostrophes ' ]]> end" ),
+    QStringLiteral( "carriage\rreturn, line\nfeed, tab\tcharacter" ),
+    QStringLiteral( "Za\u017c\u00f3\u0142\u0107 g\u0119\u015bl\u0105 ja\u017a\u0144, \u6771\u4eac, \u041c\u043e\u0441\u043a\u0432\u0430" ),
+    QString::fromUtf8( "surrogate pair \xF0\x9F\x97\xBA end" ),
+    QStringLiteral( "lone surrogate " ) + QChar( 0xD83D ) + QStringLiteral( " end" ),
+    QStringLiteral( "non characters " ) + QChar( 0xFFFE ) + QChar( 0xFDD0 ) + QChar( 0xFFFF ) + QStringLiteral( " end" ),
+    QString(),
+  };
+  int index = 0;
+  for ( const QString &text : texts )
+  {
+    QDomElement field = doc.createElement( QStringLiteral( "qgs:field%1" ).arg( index++ ) );
+    field.appendChild( doc.createTextNode( text ) );
+    feature.appendChild( field );
+  }
+
+  const QByteArray expected = doc.toByteArray();
+  QVERIFY( expected.contains( "&lt;tag>" ) );
+  QCOMPARE( QgsWfs::domDocumentToByteArray( doc ), expected );
+
+  // documents with a processing instruction or a document type
+  QDomDocument withDeclaration;
+  withDeclaration.appendChild( withDeclaration.createProcessingInstruction( QStringLiteral( "xml" ), QStringLiteral( "version=\"1.0\" encoding=\"ISO-8859-1\"" ) ) );
+  QDomElement root = withDeclaration.createElement( QStringLiteral( "root" ) );
+  root.appendChild( withDeclaration.createTextNode( QStringLiteral( "\u017c\u00f3\u0142w \u00e9" ) ) );
+  withDeclaration.appendChild( root );
+  QCOMPARE( QgsWfs::domDocumentToByteArray( withDeclaration ), withDeclaration.toByteArray() );
+
+  QDomDocument withDoctype( QStringLiteral( "html" ) );
+  withDoctype.appendChild( withDoctype.createElement( QStringLiteral( "html" ) ) );
+  QCOMPARE( QgsWfs::domDocumentToByteArray( withDoctype ), withDoctype.toByteArray() );
+
+  QCOMPARE( QgsWfs::domDocumentToByteArray( QDomDocument() ), QDomDocument().toByteArray() );
 }
 
 QGSTEST_MAIN( TestQgsServerWfsGetFeature )

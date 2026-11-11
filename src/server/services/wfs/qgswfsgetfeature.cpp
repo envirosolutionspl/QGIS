@@ -1353,7 +1353,7 @@ namespace QgsWfs
           featureElement = createFeatureGML2( feature, gmlDoc, params, project, pkAttributes );
           gmlDoc.appendChild( featureElement );
         }
-        response.write( gmlDoc.toByteArray() );
+        response.write( domDocumentToByteArray( gmlDoc ) );
       }
 
       // Stream partial content

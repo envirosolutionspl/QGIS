@@ -30,6 +30,7 @@
 #include "qgsserversettings.h"
 
 class QgsMapLayer;
+class QDomDocument;
 
 /**
  * \ingroup server
@@ -69,6 +70,15 @@ namespace QgsWfs
    * Transform a Filter element to a feature request and update server feature ids
    */
   QgsFeatureRequest parseFilterElement( const QString &typeName, QDomElement &filterElem, QStringList &serverFids, const QgsProject *project = nullptr, const QgsMapLayer *layer = nullptr );
+
+  /**
+   * Returns \a doc as UTF-8 XML, with the same result as QDomDocument::toByteArray().
+   *
+   * With Qt 5 the serialization of a document asks its text codec, for every character of every text,
+   * whether the character can be encoded, and the codec converts the character to answer. Here the answer
+   * is given without a conversion for the characters which are always valid in UTF-8.
+   */
+  QByteArray domDocumentToByteArray( const QDomDocument &doc );
 
   // Define namespaces used in WFS documents
   const QString WFS_NAMESPACE = QStringLiteral( "http://www.opengis.net/wfs" );
