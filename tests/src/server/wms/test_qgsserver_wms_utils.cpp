@@ -53,11 +53,15 @@ void TestQgsServerWmsUtils::writeImage_png_data()
   QTest::addColumn<int>( "format" );
   QTest::addColumn<int>( "width" );
   QTest::addColumn<int>( "height" );
+  QTest::addColumn<bool>( "continuousTone" );
 
-  QTest::newRow( "opaque" ) << static_cast<int>( QImage::Format_RGB32 ) << 301 << 157;
-  QTest::newRow( "alpha" ) << static_cast<int>( QImage::Format_ARGB32 ) << 301 << 157;
-  QTest::newRow( "premultiplied alpha" ) << static_cast<int>( QImage::Format_ARGB32_Premultiplied ) << 301 << 157;
-  QTest::newRow( "one pixel" ) << static_cast<int>( QImage::Format_ARGB32_Premultiplied ) << 1 << 1;
+  QTest::newRow( "opaque" ) << static_cast<int>( QImage::Format_RGB32 ) << 301 << 157 << false;
+  QTest::newRow( "alpha" ) << static_cast<int>( QImage::Format_ARGB32 ) << 301 << 157 << false;
+  QTest::newRow( "premultiplied alpha" ) << static_cast<int>( QImage::Format_ARGB32_Premultiplied ) << 301 << 157 << false;
+  QTest::newRow( "one pixel" ) << static_cast<int>( QImage::Format_ARGB32_Premultiplied ) << 1 << 1 << false;
+  // images without flat areas are written with another row filter
+  QTest::newRow( "opaque continuous tone" ) << static_cast<int>( QImage::Format_RGB32 ) << 301 << 157 << true;
+  QTest::newRow( "premultiplied alpha continuous tone" ) << static_cast<int>( QImage::Format_ARGB32_Premultiplied ) << 301 << 157 << true;
 }
 
 void TestQgsServerWmsUtils::writeImage_png()
@@ -65,10 +69,20 @@ void TestQgsServerWmsUtils::writeImage_png()
   QFETCH( int, format );
   QFETCH( int, width );
   QFETCH( int, height );
+  QFETCH( bool, continuousTone );
 
   // an image with flat areas, gradients, antialiased edges and partial transparency
   QImage image( width, height, static_cast<QImage::Format>( format ) );
   image.fill( QColor( 255, 255, 255, 0 ) );
+  if ( continuousTone )
+  {
+    // every pixel differs from its neighbours
+    for ( int y = 0; y < height; ++y )
+    {
+      for ( int x = 0; x < width; ++x )
+        image.setPixelColor( x, y, QColor( ( x * 7 + y * 3 ) % 256, ( x * 5 + y * 11 ) % 256, ( x * 13 + y ) % 256, 255 - ( x + y ) % 100 ) );
+    }
+  }
   {
     QPainter painter( &image );
     painter.setRenderHint( QPainter::Antialiasing );
