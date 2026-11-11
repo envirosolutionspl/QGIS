@@ -69,7 +69,8 @@ void QgsConfigCache::initialize( QgsServerSettings *settings )
     return;
   }
 
-  sInstance = new QgsConfigCache( getStrategyFromSettings( settings ) );
+  // the constructor taking the settings also applies the project cache size
+  sInstance = settings ? new QgsConfigCache( settings ) : new QgsConfigCache( getStrategyFromSettings( settings ) );
 }
 
 QgsConfigCache *QgsConfigCache::instance()
