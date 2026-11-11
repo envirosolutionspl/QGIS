@@ -445,6 +445,7 @@ class QgsPostgresProvider final : public QgsVectorDataProvider
     QString paramValue( const QString &fieldvalue, const QString &defaultValue ) const;
 
     mutable QgsPostgresConn *mConnectionRO = nullptr; //!< Read-only database connection (initially)
+    bool mConnectionROIsPooled = false;               //!< Whether the read-only connection was acquired from the connection pool
     QgsPostgresConn *mConnectionRW = nullptr;         //!< Read-write database connection (on update)
 
     QgsPostgresConn *connectionRO() const;

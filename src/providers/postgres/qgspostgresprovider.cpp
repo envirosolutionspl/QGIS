@@ -160,7 +160,18 @@ QgsPostgresProvider::QgsPostgresProvider( QString const &uri, const ProviderOpti
     return;
   }
 
-  mConnectionRO = QgsPostgresConn::connectDb( mUri, true, true, false, !mReadFlags.testFlag( Qgis::DataProviderReadFlag::SkipCredentialsRequest ) );
+  if ( flags.testFlag( Qgis::DataProviderReadFlag::ParallelThreadLoading ) )
+  {
+    // Constructor is called in another thread than the thread where the provider will live, the
+    // connection is only used until the end of the constructor. Take it from the connection pool:
+    // layers loaded in parallel then reuse a few connections instead of opening a new one each.
+    mConnectionRO = QgsPostgresConnPool::instance()->acquireConnection( QgsPostgresConn::connectionInfo( mUri, false ) );
+    mConnectionROIsPooled = mConnectionRO;
+  }
+  else
+  {
+    mConnectionRO = QgsPostgresConn::connectDb( mUri, true, true, false, !mReadFlags.testFlag( Qgis::DataProviderReadFlag::SkipCredentialsRequest ) );
+  }
   if ( !mConnectionRO )
   {
     return;
@@ -296,7 +307,7 @@ QgsPostgresProvider::QgsPostgresProvider( QString const &uri, const ProviderOpti
   mLayerMetadata.setCrs( crs() );
 
   // Constructor is called in another thread than the thread where the provider will live,
-  // so we disconnect the DB, connection will be done later in the provider thread when needed
+  // so we release the connection, connection will be done later in the provider thread when needed
   if ( flags.testFlag( Qgis::DataProviderReadFlag::ParallelThreadLoading ) )
     disconnectDb();
 }
@@ -467,7 +478,15 @@ void QgsPostgresProvider::disconnectDb()
 {
   if ( mConnectionRO )
   {
-    mConnectionRO->unref();
+    if ( mConnectionROIsPooled )
+    {
+      QgsPostgresConnPool::instance()->releaseConnection( mConnectionRO );
+      mConnectionROIsPooled = false;
+    }
+    else
+    {
+      mConnectionRO->unref();
+    }
     mConnectionRO = nullptr;
   }
 
