@@ -2981,7 +2981,10 @@ void QgsProject::onMapLayersAdded( const QList<QgsMapLayer *> &layers )
 
     if ( QgsVectorLayer *vlayer = qobject_cast<QgsVectorLayer *>( layer ) )
     {
-      vlayer->setReadExtentFromXml( mFlags & Qgis::ProjectFlag::TrustStoredLayerStatistics );
+      // do not reset the property when the project does not trust the layer metadata: the layer may have
+      // been read with the Qgis::ProjectReadFlag::TrustLayerMetadata flag, which also enables it
+      if ( mFlags & Qgis::ProjectFlag::TrustStoredLayerStatistics )
+        vlayer->setReadExtentFromXml( true );
       if ( vlayer->dataProvider() )
         vlayer->dataProvider()->setProviderProperty( QgsVectorDataProvider::EvaluateDefaultValues,
             ( bool )( mFlags & Qgis::ProjectFlag::EvaluateDefaultValuesOnProviderSide ) );
