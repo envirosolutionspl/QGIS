@@ -21,6 +21,7 @@
 
 #include <QRegularExpression>
 
+#include <algorithm>
 #include <png.h>
 
 #include "qgsmodule.h"
@@ -45,7 +46,34 @@ namespace
   }
 
   /**
-   * Writes a 32 bits \a image as PNG to \a device, without row filtering and with
+   * Returns the PNG row filter to use for a 32 bits \a image.
+   *
+   * Rendered vector maps are mostly made of flat areas, which deflate better and faster
+   * without row filtering. Continuous tone images, like aerial imagery, are both smaller
+   * and faster to deflate with a row filter. A few rows are sampled to tell them apart.
+   */
+  int pngRowFilter( const QImage &image )
+  {
+    const int width = image.width();
+    const int height = image.height();
+    const int step = std::max( 1, height / 16 );
+    qint64 flat = 0;
+    qint64 total = 0;
+    for ( int y = 0; y < height; y += step )
+    {
+      const QRgb *row = reinterpret_cast<const QRgb *>( image.constScanLine( y ) );
+      for ( int x = 1; x < width; ++x )
+      {
+        if ( row[x] == row[x - 1] )
+          ++flat;
+      }
+      total += width - 1;
+    }
+    return flat * 3 < total ? PNG_FILTER_UP : PNG_FILTER_NONE;
+  }
+
+  /**
+   * Writes a 32 bits \a image as PNG to \a device, with a single row filter and
    * a low deflate level.
    *
    * For rendered maps this is several times faster than the PNG writer of Qt, which
@@ -75,6 +103,8 @@ namespace
         return false;
     }
 
+    const int rowFilter = pngRowFilter( image );
+
     png_structp png = png_create_write_struct( PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr );
     if ( !png )
       return false;
@@ -95,7 +125,7 @@ namespace
 
     png_set_write_fn( png, device, pngWriteCallback, pngFlushCallback );
     png_set_compression_level( png, 2 );
-    png_set_filter( png, PNG_FILTER_TYPE_BASE, PNG_FILTER_NONE );
+    png_set_filter( png, PNG_FILTER_TYPE_BASE, rowFilter );
     png_set_IHDR( png, info, static_cast<png_uint_32>( image.width() ), static_cast<png_uint_32>( image.height() ), 8, hasAlpha ? PNG_COLOR_TYPE_RGB_ALPHA : PNG_COLOR_TYPE_RGB, PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT );
     if ( image.dotsPerMeterX() > 0 || image.dotsPerMeterY() > 0 )
       png_set_pHYs( png, info, static_cast<png_uint_32>( image.dotsPerMeterX() ), static_cast<png_uint_32>( image.dotsPerMeterY() ), PNG_RESOLUTION_METER );
