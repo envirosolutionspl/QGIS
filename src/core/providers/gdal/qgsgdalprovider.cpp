@@ -1246,7 +1246,10 @@ bool QgsGdalProvider::readBlock( int bandNo, QgsRectangle  const &reqExtent, int
         src += ( tmpCol - lastCol ) * dataSize;
         lastCol = tmpCol;
       }
-      memcpy( dst, src, dataSize );
+      if ( dataSize == 1 )
+        *dst = *src; // most common case (8-bit bands), without a call to memcpy for every cell
+      else
+        memcpy( dst, src, dataSize );
       dst += dataSize;
       x += increment;
     }
