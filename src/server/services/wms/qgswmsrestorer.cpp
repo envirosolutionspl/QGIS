@@ -64,8 +64,13 @@ QgsLayerRestorer::QgsLayerRestorer( const QList<QgsMapLayer *> &layers )
         break;
       }
 
-      case Qgis::LayerType::Mesh:
       case Qgis::LayerType::VectorTile:
+      {
+        settings.mOpacity = layer->opacity();
+        break;
+      }
+
+      case Qgis::LayerType::Mesh:
       case Qgis::LayerType::Plugin:
       case Qgis::LayerType::Annotation:
       case Qgis::LayerType::PointCloud:
@@ -124,8 +129,13 @@ QgsLayerRestorer::~QgsLayerRestorer()
         break;
       }
 
-      case Qgis::LayerType::Mesh:
       case Qgis::LayerType::VectorTile:
+      {
+        layer->setOpacity( settings.mOpacity );
+        break;
+      }
+
+      case Qgis::LayerType::Mesh:
       case Qgis::LayerType::Plugin:
       case Qgis::LayerType::Annotation:
       case Qgis::LayerType::PointCloud:
