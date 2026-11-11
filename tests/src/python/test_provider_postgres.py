@@ -5754,6 +5754,44 @@ class TestPyQgsPostgresProviderAsyncCreation(QgisTestCase):
 
         settings.setVariantValue(current_value)
 
+    def testParallelLoadingReusesConnection(self):
+        """Providers created for a parallel loading take their connection
+        from the connection pool instead of opening a new one each"""
+
+        def connection_count():
+            # statistics views are frozen for the duration of a transaction
+            self.con.commit()
+            cur = self.con.cursor()
+            cur.execute(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"
+            )
+            count = cur.fetchone()[0]
+            cur.close()
+            self.con.commit()
+            return count
+
+        # sslmode differs from the other tests, so that no connection of the
+        # pool can already exist for this connection string
+        uri = (
+            self.dbconn
+            + ' sslmode=allow srid=4326 type=POINT table="qgis_test"."b31799_test_table" (geom) sql='
+        )
+        flags = Qgis.DataProviderReadFlags(
+            Qgis.DataProviderReadFlag.ParallelThreadLoading
+        )
+
+        before = connection_count()
+        providers = []
+        for _ in range(3):
+            provider = QgsProviderRegistry.instance().createProvider(
+                "postgres", uri, QgsDataProvider.ProviderOptions(), flags
+            )
+            self.assertTrue(provider.isValid())
+            providers.append(provider)
+
+        # the three providers used one connection, which is now idle in the pool
+        self.assertEqual(connection_count() - before, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
