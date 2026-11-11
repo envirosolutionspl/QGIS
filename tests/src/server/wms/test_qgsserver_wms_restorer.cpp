@@ -18,6 +18,7 @@
 #include "qgsserverinterfaceimpl.h"
 #include "qgstest.h"
 #include "qgsvectorlayer.h"
+#include "qgsvectortilelayer.h"
 #include "qgswmsrestorer.h"
 
 /**
@@ -33,6 +34,7 @@ class TestQgsServerWmsRestorer : public QObject
     void cleanupTestCase();
 
     void restorer_layer();
+    void restorer_vector_tile_layer();
 };
 
 void TestQgsServerWmsRestorer::initTestCase()
@@ -96,6 +98,23 @@ void TestQgsServerWmsRestorer::restorer_layer()
   // check that initial values are well restored
   QCOMPARE( vl->name(), name );
   QCOMPARE( vl->opacity(), opacity );
+}
+
+void TestQgsServerWmsRestorer::restorer_vector_tile_layer()
+{
+  QgsVectorTileLayer layer( QStringLiteral( "type=xyz&url=file:///tmp/{z}/{x}/{y}.pbf" ), QStringLiteral( "tiles" ) );
+  const double opacity = layer.opacity();
+
+  {
+    // destructor is called once out of scope
+    const QgsLayerRestorer restorer( { &layer } );
+
+    layer.setOpacity( opacity / 2 );
+    QCOMPARE( layer.opacity(), opacity / 2 );
+  }
+
+  // check that the initial opacity is restored
+  QCOMPARE( layer.opacity(), opacity );
 }
 
 QGSTEST_MAIN( TestQgsServerWmsRestorer )
