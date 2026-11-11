@@ -2273,6 +2273,55 @@ class TestQgsProject(QgisTestCase):
             extentXML = layerXML.findall(".//extent")[0]
             self.assertNotEqual(len(extentXML.getchildren()), 0)
 
+    def test_read_extent_from_xml_with_trust_read_flag(self):
+        """
+        Test that the layers read their extent from the project file when the
+        project is read with the TrustLayerMetadata flag
+        """
+
+        layer = QgsVectorLayer(
+            "Point?crs=epsg:4326&field=int:integer", "test", "memory"
+        )
+        feature = QgsFeature(layer.fields())
+        feature.setGeometry(QgsGeometry.fromWkt("Point (1 2)"))
+        self.assertTrue(layer.dataProvider().addFeature(feature))
+        layer.updateExtents()
+
+        project = QgsProject()
+        project.addMapLayers([layer])
+        self.assertFalse(layer.readExtentFromXml())
+
+        with TemporaryDirectory() as d:
+            path = os.path.join(d, "project.qgs")
+            self.assertTrue(project.write(path))
+
+            # the project does not trust the layer metadata
+            project = QgsProject()
+            self.assertTrue(project.read(path))
+            (layer,) = project.mapLayers().values()
+            self.assertFalse(layer.readExtentFromXml())
+
+            # but the reader of the project does
+            project = QgsProject()
+            self.assertTrue(
+                project.read(
+                    path,
+                    Qgis.ProjectReadFlags(Qgis.ProjectReadFlag.TrustLayerMetadata),
+                )
+            )
+            (layer,) = project.mapLayers().values()
+            self.assertTrue(layer.readExtentFromXml())
+
+            # the project trusts the layer metadata
+            project.setFlags(
+                project.flags() | Qgis.ProjectFlag.TrustStoredLayerStatistics
+            )
+            self.assertTrue(project.write(path))
+            project = QgsProject()
+            self.assertTrue(project.read(path))
+            (layer,) = project.mapLayers().values()
+            self.assertTrue(layer.readExtentFromXml())
+
 
 if __name__ == "__main__":
     unittest.main()
