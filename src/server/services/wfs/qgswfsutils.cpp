@@ -26,6 +26,53 @@
 #include "qgsvectorlayer.h"
 #include "qgsproject.h"
 
+#include <QDomDocument>
+#if QT_VERSION < QT_VERSION_CHECK( 6, 0, 0 )
+#include <QTextCodec>
+#include <QTextStream>
+
+namespace
+{
+
+  /**
+   * Text codec which only answers QTextCodec::canEncode() for a document written to a string as UTF-8:
+   * the characters which are always valid in UTF-8 are accepted without a conversion, the decision for
+   * the other ones (surrogates, non characters) is left to the UTF-8 codec of Qt.
+   */
+  class Utf8CheckCodec : public QTextCodec
+  {
+    public:
+      Utf8CheckCodec()
+        : mUtf8( QTextCodec::codecForName( "UTF-8" ) )
+      {}
+
+      QByteArray name() const override { return QByteArrayLiteral( "x-qgis-utf8-check" ); }
+      int mibEnum() const override { return -1001; } // not an IANA character set
+
+    protected:
+      QString convertToUnicode( const char *chars, int length, ConverterState *state ) const override
+      {
+        return mUtf8->toUnicode( chars, length, state );
+      }
+
+      QByteArray convertFromUnicode( const QChar *chars, int length, ConverterState *state ) const override
+      {
+        for ( int i = 0; i < length; ++i )
+        {
+          const ushort c = chars[i].unicode();
+          if ( c >= 0xD800 && ( c < 0xE000 || c >= 0xFDD0 ) )
+            return mUtf8->fromUnicode( chars, length, state );
+        }
+        return QByteArray();
+      }
+
+    private:
+      QTextCodec *mUtf8 = nullptr;
+  };
+
+} // namespace
+#endif
+
 namespace QgsWfs
 {
   QString implementationVersion()
@@ -290,6 +337,35 @@ namespace QgsWfs
       }
     }
     return request;
+  }
+
+  QByteArray domDocumentToByteArray( const QDomDocument &doc )
+  {
+#if QT_VERSION < QT_VERSION_CHECK( 6, 0, 0 )
+    // A document with a processing instruction or a document type is written in another way
+    // when the encoding comes from the stream: these are left to Qt
+    bool simple = doc.doctype().name().isEmpty();
+    for ( QDomNode node = doc.firstChild(); simple && !node.isNull(); node = node.nextSibling() )
+      simple = !node.isProcessingInstruction();
+
+    if ( simple )
+    {
+      // the codecs are owned by Qt
+      static QTextCodec *sCodec = new Utf8CheckCodec();
+      // written first by QDomNode::save() when the encoding comes from the stream
+      static const QString sDeclaration = QStringLiteral( "<?xml version=\"1.0\" encoding=\"%1\"?>\n" ).arg( QString::fromLatin1( sCodec->name() ) );
+
+      QString xml;
+      {
+        QTextStream stream( &xml, QIODevice::WriteOnly );
+        stream.setCodec( sCodec );
+        doc.save( stream, 1, QDomNode::EncodingFromTextStream );
+      }
+      if ( xml.startsWith( sDeclaration ) )
+        return xml.midRef( sDeclaration.size() ).toUtf8();
+    }
+#endif
+    return doc.toByteArray();
   }
 
 } // namespace QgsWfs
