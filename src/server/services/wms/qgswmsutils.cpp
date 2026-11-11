@@ -250,7 +250,7 @@ namespace QgsWms
         // the color table.
         const QImage img256 = img.convertToFormat( QImage::Format_ARGB32 );
         medianCut( colorTable, 256, img256 );
-        result = img256.convertToFormat( QImage::Format_Indexed8, colorTable, Qt::ColorOnly | Qt::ThresholdDither | Qt::ThresholdAlphaDither | Qt::NoOpaqueDetection );
+        result = imageWithColorTable( img256, colorTable );
       }
         contentType = QStringLiteral( "image/png" );
         saveFormat = QStringLiteral( "PNG" );

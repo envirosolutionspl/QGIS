@@ -39,6 +39,15 @@ namespace QgsWms
    */
   void medianCut( QVector<QRgb> &colorTable, int nColors, const QImage &inputImage );
 
+  /**
+   * Converts a 32 bits image to an 8 bits image using the colors of \a colorTable: every pixel gets
+   * the closest color of the table.
+   *
+   * The result is the same as with QImage::convertToFormat() called with a color table, the search of
+   * the closest color is faster.
+   */
+  QImage imageWithColorTable( const QImage &image, const QVector<QRgb> &colorTable );
+
 } // namespace QgsWms
 
 #endif
