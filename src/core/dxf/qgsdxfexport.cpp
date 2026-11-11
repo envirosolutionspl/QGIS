@@ -175,7 +175,28 @@ void QgsDxfExport::writeGroup( const QColor &color, int exactMatchCode, int rgbC
 
 void QgsDxfExport::writeGroupCode( int code )
 {
-  mDevice->write( mCodec->fromUnicode( u"%1\n"_s.arg( code, 3, 10, QChar( ' ' ) ) ) );
+  // A group code is written before every value and there are few different codes:
+  // each code is formatted and encoded once (again when the codec changes)
+  static constexpr int CACHED_CODES = 1100;
+  thread_local QByteArray sEncodedCodes[CACHED_CODES];
+  thread_local QTextCodec *sCodec = nullptr;
+  if ( code >= 0 && code < CACHED_CODES )
+  {
+    if ( sCodec != mCodec )
+    {
+      for ( QByteArray &encodedCode : sEncodedCodes )
+        encodedCode.clear();
+      sCodec = mCodec;
+    }
+    QByteArray &encodedCode = sEncodedCodes[code];
+    if ( encodedCode.isEmpty() )
+      encodedCode = mCodec->fromUnicode( u"%1\n"_s.arg( code, 3, 10, QChar( ' ' ) ) );
+    mDevice->write( encodedCode );
+  }
+  else
+  {
+    mDevice->write( mCodec->fromUnicode( u"%1\n"_s.arg( code, 3, 10, QChar( ' ' ) ) ) );
+  }
 }
 
 void QgsDxfExport::writeInt( int i )
