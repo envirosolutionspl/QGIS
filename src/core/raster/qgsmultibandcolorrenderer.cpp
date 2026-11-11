@@ -279,7 +279,52 @@ QgsRasterBlock *QgsMultiBandColorRenderer::block( int bandNo, QgsRectangle  cons
   }
 
   const qgssize count = ( qgssize )width * height;
-  for ( qgssize i = 0; i < count; i++ )
+
+  // Fast rendering of 8-bit bands. QgsRasterBlock::isNoData() is too slow to be called three times for every cell:
+  // with a no data value its result only depends on the value of the cell, so the test is done once for each
+  // of the 256 possible values of a band
+  const bool renderByteRgb = fastDraw && hasByteRgb
+                             && redBlock->width() == width && redBlock->height() == height
+                             && greenBlock->width() == width && greenBlock->height() == height
+                             && blueBlock->width() == width && blueBlock->height() == height;
+  if ( renderByteRgb )
+  {
+    const QgsRasterBlock *blocks[3] = { redBlock, greenBlock, blueBlock };
+    bool isNoDataValue[3][256] = {};
+    bool hasNoDataValues = false;
+    bool hasNoDataBitmaps = false;
+    for ( int band = 0; band < 3; ++band )
+    {
+      if ( blocks[band]->hasNoDataValue() )
+      {
+        hasNoDataValues = true;
+        for ( int value = 0; value < 256; ++value )
+          isNoDataValue[band][value] = qgsDoubleNear( value, blocks[band]->noDataValue() );
+      }
+      else if ( blocks[band]->hasNoData() )
+      {
+        hasNoDataBitmaps = true;
+      }
+    }
+
+    for ( qgssize i = 0; i < count; i++ )
+    {
+      const quint8 red = redData[i];
+      const quint8 green = greenData[i];
+      const quint8 blue = blueData[i];
+      if ( ( hasNoDataValues && ( isNoDataValue[0][red] || isNoDataValue[1][green] || isNoDataValue[2][blue] ) )
+           || ( hasNoDataBitmaps && ( redBlock->isNoData( i ) || greenBlock->isNoData( i ) || blueBlock->isNoData( i ) ) ) )
+      {
+        outputBlock->setColor( i, myDefaultColor );
+      }
+      else
+      {
+        outputBlockColorData[i] = qRgb( red, green, blue );
+      }
+    }
+  }
+
+  for ( qgssize i = renderByteRgb ? count : 0; i < count; i++ )
   {
     if ( fastDraw ) //fast rendering if no transparency, stretching, color inversion, etc.
     {
