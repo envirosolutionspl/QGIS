@@ -190,12 +190,26 @@ class TestQgsServerConfigCache(unittest.TestCase):
     def test_initialized_instance(self):
 
         os.environ["QGIS_SERVER_PROJECT_CACHE_STRATEGY"] = "off"
-        settings = QgsServerSettings()
-        settings.load()
+        os.environ["QGIS_SERVER_PROJECT_CACHE_SIZE"] = "1"
+        try:
+            settings = QgsServerSettings()
+            settings.load()
+        finally:
+            del os.environ["QGIS_SERVER_PROJECT_CACHE_SIZE"]
 
         QgsConfigCache.initialize(settings)
 
-        self.assertEqual(QgsConfigCache.instance().strategyName(), "off")
+        cache = QgsConfigCache.instance()
+        self.assertEqual(cache.strategyName(), "off")
+
+        # the project cache size from the settings applies to the instance
+        path1 = Path(unitTestDataPath("qgis_server_project")) / "project.qgs"
+        path2 = Path(unitTestDataPath("qgis_server")) / "test_project.qgs"
+        self.assertIsNotNone(cache.project(str(path1)))
+        self.assertIsNotNone(cache.project(str(path2)))
+        projects = cache.projects()
+        self.assertEqual(len(projects), 1)
+        self.assertEqual(projects[0].fileName(), path2.as_posix())
 
     def test_list_projects(self):
         settings = QgsServerSettings()
