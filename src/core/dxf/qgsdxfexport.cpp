@@ -173,7 +173,21 @@ void QgsDxfExport::writeGroup( const QColor &color, int exactMatchCode, int rgbC
 
 void QgsDxfExport::writeGroupCode( int code )
 {
-  mTextStream << QStringLiteral( "%1\n" ).arg( code, 3, 10, QChar( ' ' ) );
+  // A group code is written before every value and there are few different codes:
+  // each code is formatted once
+  static constexpr int CACHED_CODES = 1100;
+  thread_local QString sFormattedCodes[CACHED_CODES];
+  if ( code >= 0 && code < CACHED_CODES )
+  {
+    QString &formattedCode = sFormattedCodes[code];
+    if ( formattedCode.isEmpty() )
+      formattedCode = QStringLiteral( "%1\n" ).arg( code, 3, 10, QChar( ' ' ) );
+    mTextStream << formattedCode;
+  }
+  else
+  {
+    mTextStream << QStringLiteral( "%1\n" ).arg( code, 3, 10, QChar( ' ' ) );
+  }
 }
 
 void QgsDxfExport::writeInt( int i )
