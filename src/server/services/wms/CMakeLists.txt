@@ -34,6 +34,8 @@ set (WMS_HDRS
 ########################################################
 # Build
 
+find_package(PNG REQUIRED)
+
 set(_library_suffix_MODULE "")
 set(_library_suffix_STATIC "_static")
 
@@ -59,6 +61,7 @@ foreach(_library_type MODULE STATIC)
   target_link_libraries(${_library_name}
     qgis_core
     qgis_server
+    PNG::PNG
   )
 endforeach()
 
