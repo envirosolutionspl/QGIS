@@ -21,12 +21,107 @@
 
 #include <QRegularExpression>
 
+#include <png.h>
+
 #include "qgsmodule.h"
 #include "qgswmsutils.h"
 #include "qgsmediancut.h"
 #include "qgsserverprojectutils.h"
 #include "qgswmsserviceexception.h"
 #include "qgsproject.h"
+
+namespace
+{
+  void pngWriteCallback( png_structp png, png_bytep data, png_size_t length )
+  {
+    QIODevice *device = static_cast<QIODevice *>( png_get_io_ptr( png ) );
+    const qint64 size = static_cast<qint64>( length );
+    if ( device->write( reinterpret_cast<const char *>( data ), size ) != size )
+      png_error( png, "Write error" );
+  }
+
+  void pngFlushCallback( png_structp )
+  {
+  }
+
+  /**
+   * Writes a 32 bits \a image as PNG to \a device, without row filtering and with
+   * a low deflate level.
+   *
+   * For rendered maps this is several times faster than the PNG writer of Qt, which
+   * uses the adaptive row filters and the default deflate level, and the result is
+   * usually not larger. The decoded pixels are the same.
+   *
+   * Returns FALSE if the image could not be written, in particular when its format
+   * is not handled.
+   */
+  bool writeFastPng( QIODevice *device, const QImage &img )
+  {
+    QImage image = img;
+    bool hasAlpha = false;
+    switch ( image.format() )
+    {
+      case QImage::Format_RGB32:
+        break;
+      case QImage::Format_ARGB32:
+        hasAlpha = true;
+        break;
+      case QImage::Format_ARGB32_Premultiplied:
+        // same conversion as the one done by the PNG writer of Qt
+        image = image.convertToFormat( QImage::Format_ARGB32 );
+        hasAlpha = true;
+        break;
+      default:
+        return false;
+    }
+
+    png_structp png = png_create_write_struct( PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr );
+    if ( !png )
+      return false;
+
+    png_infop info = png_create_info_struct( png );
+    if ( !info )
+    {
+      png_destroy_write_struct( &png, nullptr );
+      return false;
+    }
+
+    // libpng jumps here on error
+    if ( setjmp( png_jmpbuf( png ) ) )
+    {
+      png_destroy_write_struct( &png, &info );
+      return false;
+    }
+
+    png_set_write_fn( png, device, pngWriteCallback, pngFlushCallback );
+    png_set_compression_level( png, 2 );
+    png_set_filter( png, PNG_FILTER_TYPE_BASE, PNG_FILTER_NONE );
+    png_set_IHDR( png, info, static_cast<png_uint_32>( image.width() ), static_cast<png_uint_32>( image.height() ), 8, hasAlpha ? PNG_COLOR_TYPE_RGB_ALPHA : PNG_COLOR_TYPE_RGB, PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT );
+    if ( image.dotsPerMeterX() > 0 || image.dotsPerMeterY() > 0 )
+      png_set_pHYs( png, info, static_cast<png_uint_32>( image.dotsPerMeterX() ), static_cast<png_uint_32>( image.dotsPerMeterY() ), PNG_RESOLUTION_METER );
+    png_write_info( png, info );
+
+    // pixels are stored as 0xAARRGGBB in the byte order of the host
+#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
+    png_set_bgr( png );
+    if ( !hasAlpha )
+      png_set_filler( png, 0, PNG_FILLER_AFTER );
+#else
+    if ( hasAlpha )
+      png_set_swap_alpha( png );
+    else
+      png_set_filler( png, 0, PNG_FILLER_BEFORE );
+#endif
+
+    const int height = image.height();
+    for ( int y = 0; y < height; ++y )
+      png_write_row( png, image.constScanLine( y ) );
+
+    png_write_end( png, info );
+    png_destroy_write_struct( &png, &info );
+    return true;
+  }
+} // namespace
 
 namespace QgsWms
 {
@@ -167,7 +262,7 @@ namespace QgsWms
       {
         result.save( response.io(), qPrintable( saveFormat ), imageQuality );
       }
-      else
+      else if ( outputFormat != ImageOutputFormat::PNG || !writeFastPng( response.io(), result ) )
       {
         result.save( response.io(), qPrintable( saveFormat ) );
       }
