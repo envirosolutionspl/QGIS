@@ -26,6 +26,7 @@
 #include "qgsserverresponse.h"
 
 #include <QBuffer>
+#include <condition_variable>
 #include <thread>
 #include <mutex>
 
@@ -59,8 +60,9 @@ class QgsSocketMonitoringThread
     std::shared_ptr<QgsFeedback> mFeedback;
     int mIpcFd = -1;
 
-    // used to synchronize socket monitoring thread and fcgi response
-    std::timed_mutex mMutex;
+    // used to wake up the socket monitoring thread as soon as the fcgi response is finished
+    std::mutex mMutex;
+    std::condition_variable mCondition;
 };
 
 /**
