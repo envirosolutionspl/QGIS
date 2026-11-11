@@ -24,11 +24,18 @@
 #include <QList>
 #include <QMultiMap>
 #include <QHash>
+#include <QStringList>
+#include <QVector>
+
+#include <algorithm>
+#include <cstdlib>
+#include <limits>
+#include <vector>
 
 namespace QgsWms
 {
 
-  typedef QList<QPair<QRgb, int>> QgsColorBox;        //Color / number of pixels
+  typedef QVector<QPair<QRgb, int>> QgsColorBox;      //Color / number of pixels
   typedef QMultiMap<int, QgsColorBox> QgsColorBoxMap; // sum of pixels / color box
 
   namespace
@@ -131,26 +138,6 @@ namespace QgsWms
       return true;
     }
 
-    bool redCompare( QPair<QRgb, int> c1, QPair<QRgb, int> c2 )
-    {
-      return qRed( c1.first ) < qRed( c2.first );
-    }
-
-    bool greenCompare( QPair<QRgb, int> c1, QPair<QRgb, int> c2 )
-    {
-      return qGreen( c1.first ) < qGreen( c2.first );
-    }
-
-    bool blueCompare( QPair<QRgb, int> c1, QPair<QRgb, int> c2 )
-    {
-      return qBlue( c1.first ) < qBlue( c2.first );
-    }
-
-    bool alphaCompare( QPair<QRgb, int> c1, QPair<QRgb, int> c2 )
-    {
-      return qAlpha( c1.first ) < qAlpha( c2.first );
-    }
-
     QRgb boxColor( const QgsColorBox &box, int boxPixels )
     {
       double avRed = 0;
@@ -195,22 +182,22 @@ namespace QgsWms
         return;
       }
 
-      //sort color box for a/r/g/b
+      //sort color box for a/r/g/b (with lambdas: a comparison function passed as a pointer is not inlined in the sort)
       if ( redRange >= greenRange && redRange >= blueRange && redRange >= alphaRange )
       {
-        std::sort( colorBox.begin(), colorBox.end(), redCompare );
+        std::sort( colorBox.begin(), colorBox.end(), []( const QPair<QRgb, int> &c1, const QPair<QRgb, int> &c2 ) { return qRed( c1.first ) < qRed( c2.first ); } );
       }
       else if ( greenRange >= redRange && greenRange >= blueRange && greenRange >= alphaRange )
       {
-        std::sort( colorBox.begin(), colorBox.end(), greenCompare );
+        std::sort( colorBox.begin(), colorBox.end(), []( const QPair<QRgb, int> &c1, const QPair<QRgb, int> &c2 ) { return qGreen( c1.first ) < qGreen( c2.first ); } );
       }
       else if ( blueRange >= redRange && blueRange >= greenRange && blueRange >= alphaRange )
       {
-        std::sort( colorBox.begin(), colorBox.end(), blueCompare );
+        std::sort( colorBox.begin(), colorBox.end(), []( const QPair<QRgb, int> &c1, const QPair<QRgb, int> &c2 ) { return qBlue( c1.first ) < qBlue( c2.first ); } );
       }
       else
       {
-        std::sort( colorBox.begin(), colorBox.end(), alphaCompare );
+        std::sort( colorBox.begin(), colorBox.end(), []( const QPair<QRgb, int> &c1, const QPair<QRgb, int> &c2 ) { return qAlpha( c1.first ) < qAlpha( c2.first ); } );
       }
 
       //get median
@@ -316,6 +303,79 @@ namespace QgsWms
       colorTable[index] = boxColor( colorBoxIt.value(), colorBoxIt.key() );
       ++index;
     }
+  }
+
+  QImage imageWithColorTable( const QImage &image, const QVector<QRgb> &colorTable )
+  {
+    const Qt::ImageConversionFlags flags = Qt::ColorOnly | Qt::ThresholdDither | Qt::ThresholdAlphaDither | Qt::NoOpaqueDetection;
+    const int nColors = colorTable.size();
+    QImage result;
+    // Qt converts the images with another format to QImage::Format_ARGB32 first, this is left to it
+    if ( image.format() == QImage::Format_ARGB32 && nColors > 0 && nColors <= 256 )
+      result = QImage( image.size(), QImage::Format_Indexed8 );
+    if ( result.isNull() )
+      return image.convertToFormat( QImage::Format_Indexed8, colorTable, flags );
+
+    // the color table, the resolution and the texts of the result are the ones set by Qt for this conversion
+    const QImage reference = image.copy( 0, 0, 1, 1 ).convertToFormat( QImage::Format_Indexed8, colorTable, flags );
+    result.setColorTable( reference.colorTable() );
+    result.setDotsPerMeterX( reference.dotsPerMeterX() );
+    result.setDotsPerMeterY( reference.dotsPerMeterY() );
+    result.setDevicePixelRatio( reference.devicePixelRatio() );
+    const QStringList textKeys = reference.textKeys();
+    for ( const QString &key : textKeys )
+      result.setText( key, reference.text( key ) );
+
+    // one array for each channel, so that the distances to all the colors of the table are calculated with SIMD instructions
+    quint8 red[256], green[256], blue[256], alpha[256];
+    for ( int i = 0; i < nColors; ++i )
+    {
+      red[i] = static_cast<quint8>( qRed( colorTable.at( i ) ) );
+      green[i] = static_cast<quint8>( qGreen( colorTable.at( i ) ) );
+      blue[i] = static_cast<quint8>( qBlue( colorTable.at( i ) ) );
+      alpha[i] = static_cast<quint8>( qAlpha( colorTable.at( i ) ) );
+    }
+    quint16 distances[256];
+
+    // Direct mapped cache of the closest color of the colors already found in the image (maps have many pixels
+    // of the same color): a color replaces the color which was in its entry
+    struct CacheEntry
+    {
+        QRgb pixel;
+        int index; // in the color table, -1 for an empty entry
+    };
+    std::vector<CacheEntry> cache( 1 << 16, CacheEntry { 0, -1 } );
+    const int width = image.width();
+    const int height = image.height();
+    for ( int y = 0; y < height; ++y )
+    {
+      const QRgb *pixels = reinterpret_cast<const QRgb *>( image.constScanLine( y ) );
+      uchar *indexes = result.scanLine( y );
+      for ( int x = 0; x < width; ++x )
+      {
+        const QRgb pixel = pixels[x];
+        CacheEntry &entry = cache[( pixel * 2654435761U ) >> 16];
+        if ( entry.index < 0 || entry.pixel != pixel )
+        {
+          // same distance as in Qt: sum of the absolute differences of the channels
+          const int r = qRed( pixel );
+          const int g = qGreen( pixel );
+          const int b = qBlue( pixel );
+          const int a = qAlpha( pixel );
+          quint16 smallest = std::numeric_limits<quint16>::max();
+          for ( int i = 0; i < nColors; ++i )
+          {
+            distances[i] = static_cast<quint16>( std::abs( r - red[i] ) + std::abs( g - green[i] ) + std::abs( b - blue[i] ) + std::abs( a - alpha[i] ) );
+            smallest = std::min( smallest, distances[i] );
+          }
+          // first color of the table with the smallest distance, as in Qt
+          entry.pixel = pixel;
+          entry.index = static_cast<int>( std::find( distances, distances + nColors, smallest ) - distances );
+        }
+        indexes[x] = static_cast<uchar>( entry.index );
+      }
+    }
+    return result;
   }
 
 } // namespace QgsWms

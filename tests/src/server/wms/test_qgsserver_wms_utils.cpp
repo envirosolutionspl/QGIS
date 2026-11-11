@@ -15,6 +15,7 @@
 
 #include "qgstest.h"
 #include "qgsbufferserverresponse.h"
+#include "qgsmediancut.h"
 #include "qgswmsutils.h"
 
 #include <QBuffer>
@@ -35,6 +36,8 @@ class TestQgsServerWmsUtils : public QObject
 
     void writeImage_png_data();
     void writeImage_png();
+    void imageWithColorTable_data();
+    void imageWithColorTable();
 };
 
 void TestQgsServerWmsUtils::initTestCase()
@@ -120,6 +123,77 @@ void TestQgsServerWmsUtils::writeImage_png()
   QCOMPARE( decoded.dotsPerMeterX(), expected.dotsPerMeterX() );
   QCOMPARE( decoded.dotsPerMeterY(), expected.dotsPerMeterY() );
   QVERIFY( decoded == expected );
+}
+
+void TestQgsServerWmsUtils::imageWithColorTable_data()
+{
+  QTest::addColumn<int>( "format" );
+  QTest::addColumn<int>( "colors" );
+
+  QTest::newRow( "256 colors" ) << static_cast<int>( QImage::Format_ARGB32 ) << 256;
+  QTest::newRow( "16 colors" ) << static_cast<int>( QImage::Format_ARGB32 ) << 16;
+  QTest::newRow( "1 color" ) << static_cast<int>( QImage::Format_ARGB32 ) << 1;
+  QTest::newRow( "opaque" ) << static_cast<int>( QImage::Format_RGB32 ) << 256;
+  QTest::newRow( "premultiplied alpha" ) << static_cast<int>( QImage::Format_ARGB32_Premultiplied ) << 256;
+}
+
+void TestQgsServerWmsUtils::imageWithColorTable()
+{
+  QFETCH( int, format );
+  QFETCH( int, colors );
+
+  // flat areas, a gradient, antialiased edges, partial transparency and an area where every pixel differs
+  const int width = 211;
+  const int height = 157;
+  QImage image( width, height, static_cast<QImage::Format>( format ) );
+  image.fill( QColor( 255, 255, 255, 0 ) );
+  for ( int y = 0; y < height / 3; ++y )
+  {
+    for ( int x = 0; x < width; ++x )
+      image.setPixelColor( x, y, QColor( ( x * 7 + y * 3 ) % 256, ( x * 5 + y * 11 ) % 256, ( x * 13 + y ) % 256, 255 - ( x + y ) % 100 ) );
+  }
+  {
+    QPainter painter( &image );
+    painter.setRenderHint( QPainter::Antialiasing );
+    QLinearGradient gradient( 0, 0, width, height );
+    gradient.setColorAt( 0, QColor( 200, 30, 40, 255 ) );
+    gradient.setColorAt( 1, QColor( 20, 90, 220, 60 ) );
+    painter.fillRect( QRectF( 0, height / 2.0, width / 2.0, height / 2.0 ), gradient );
+    painter.setBrush( QColor( 250, 200, 0, 128 ) );
+    painter.drawEllipse( QRectF( width / 3.0, height / 4.0, width / 2.0, height / 2.0 ) );
+  }
+  image.setDotsPerMeterX( 3780 );
+  image.setDotsPerMeterY( 3543 );
+  image.setText( QStringLiteral( "Title" ), QStringLiteral( "test" ) );
+
+  QVector<QRgb> colorTable;
+  QgsWms::medianCut( colorTable, colors, image );
+  QVERIFY( !colorTable.isEmpty() );
+  QVERIFY( colorTable.size() <= colors );
+  // colors at the same distance of a pixel: the first one of the table has to be used
+  if ( colorTable.size() > 2 )
+    colorTable[colorTable.size() - 1] = colorTable.at( 0 );
+
+  const QImage expected = image.convertToFormat( QImage::Format_Indexed8, colorTable, Qt::ColorOnly | Qt::ThresholdDither | Qt::ThresholdAlphaDither | Qt::NoOpaqueDetection );
+  const QImage result = QgsWms::imageWithColorTable( image, colorTable );
+
+  QCOMPARE( result.format(), QImage::Format_Indexed8 );
+  QCOMPARE( result.size(), expected.size() );
+  QCOMPARE( result.colorTable(), expected.colorTable() );
+  QCOMPARE( result.dotsPerMeterX(), expected.dotsPerMeterX() );
+  QCOMPARE( result.dotsPerMeterY(), expected.dotsPerMeterY() );
+  QCOMPARE( result.textKeys(), expected.textKeys() );
+  for ( int y = 0; y < height; ++y )
+    QVERIFY2( memcmp( result.constScanLine( y ), expected.constScanLine( y ), width ) == 0, qPrintable( QStringLiteral( "row %1" ).arg( y ) ) );
+
+  // the files written from both images are the same
+  QBuffer resultBuffer;
+  resultBuffer.open( QIODevice::WriteOnly );
+  QVERIFY( result.save( &resultBuffer, "PNG" ) );
+  QBuffer expectedBuffer;
+  expectedBuffer.open( QIODevice::WriteOnly );
+  QVERIFY( expected.save( &expectedBuffer, "PNG" ) );
+  QCOMPARE( resultBuffer.data(), expectedBuffer.data() );
 }
 
 QGSTEST_MAIN( TestQgsServerWmsUtils )
