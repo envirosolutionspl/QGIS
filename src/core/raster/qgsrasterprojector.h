@@ -155,6 +155,21 @@ class ProjectorData
      */
     bool srcRowCol( int destRow, int destCol, int *srcRow, int *srcCol );
 
+    /**
+     * Prepares the transformation of the cells of a destination row.
+     *
+     * Has to be called before srcRowColInRow(), for each destination row in increasing order.
+     */
+    void prepareRow( int destRow );
+
+    /**
+     * Returns the source row and column indexes of a cell of the destination row
+     * set with prepareRow(). The result is the same as with srcRowCol(), without
+     * the calculations which only depend on the destination row.
+     * \returns TRUE if inside source
+     */
+    inline bool srcRowColInRow( int destCol, int *srcRow, int *srcCol );
+
     QgsRectangle srcExtent() const { return mSrcExtent; }
     int srcRows() const { return mSrcRows; }
     int srcCols() const { return mSrcCols; }
@@ -175,6 +190,15 @@ class ProjectorData
 
     //! Returns approximate source row and column indexes for current source extent and resolution.
     inline bool approximateSrcRowCol( int destRow, int destCol, int *srcRow, int *srcCol );
+
+    /**
+     * Switches to the helper rows needed for a destination row and returns the fraction
+     * used to interpolate between them.
+     */
+    inline double approximateRowFraction( int destRow );
+
+    //! Returns approximate source row and column indexes for a row fraction returned by approximateRowFraction().
+    inline bool approximateSrcRowCol( int destCol, double yfrac, int *srcRow, int *srcCol );
 
     //! \brief insert rows to matrix
     void insertRows( const QgsCoordinateTransform &ct );
@@ -283,6 +307,12 @@ class ProjectorData
 
     //! Current mHelperTop matrix row
     int mHelperTopRow;
+
+    //! Destination row set with prepareRow()
+    int mPreparedRow = 0;
+
+    //! Fraction used to interpolate between the helper rows for the row set with prepareRow()
+    double mPreparedRowFraction = 0;
 
     //! Number of mCPMatrix columns
     int mCPCols;

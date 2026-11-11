@@ -487,6 +487,25 @@ void ProjectorData::nextHelper()
   mHelperTopRow++;
 }
 
+void ProjectorData::prepareRow( int destRow )
+{
+  mPreparedRow = destRow;
+  if ( mApproximate )
+    mPreparedRowFraction = approximateRowFraction( destRow );
+}
+
+bool ProjectorData::srcRowColInRow( int destCol, int *srcRow, int *srcCol )
+{
+  if ( mApproximate )
+  {
+    return approximateSrcRowCol( destCol, mPreparedRowFraction, srcRow, srcCol );
+  }
+  else
+  {
+    return preciseSrcRowCol( mPreparedRow, destCol, srcRow, srcCol );
+  }
+}
+
 bool ProjectorData::srcRowCol( int destRow, int destCol, int *srcRow, int *srcCol )
 {
   if ( mApproximate )
@@ -557,8 +576,12 @@ bool ProjectorData::preciseSrcRowCol( int destRow, int destCol, int *srcRow, int
 
 bool ProjectorData::approximateSrcRowCol( int destRow, int destCol, int *srcRow, int *srcCol )
 {
+  return approximateSrcRowCol( destCol, approximateRowFraction( destRow ), srcRow, srcCol );
+}
+
+double ProjectorData::approximateRowFraction( int destRow )
+{
   const int myMatrixRow = matrixRow( destRow );
-  const int myMatrixCol = matrixCol( destCol );
 
   if ( myMatrixRow > mHelperTopRow )
   {
@@ -569,14 +592,17 @@ bool ProjectorData::approximateSrcRowCol( int destRow, int destCol, int *srcRow,
   const double myDestY = mDestExtent.yMaximum() - ( destRow + 0.5 ) * mDestYRes;
 
   // See the schema in javax.media.jai.WarpGrid doc (but up side down)
-  // TODO: use some kind of cache of values which can be reused
+  // The y of the points on the control points matrix only depends on the matrix row
   double myDestXMin, myDestYMin, myDestXMax, myDestYMax;
 
-  destPointOnCPMatrix( myMatrixRow + 1, myMatrixCol, &myDestXMin, &myDestYMin );
-  destPointOnCPMatrix( myMatrixRow, myMatrixCol + 1, &myDestXMax, &myDestYMax );
+  destPointOnCPMatrix( myMatrixRow + 1, 0, &myDestXMin, &myDestYMin );
+  destPointOnCPMatrix( myMatrixRow, 0, &myDestXMax, &myDestYMax );
 
-  const double yfrac = ( myDestY - myDestYMin ) / ( myDestYMax - myDestYMin );
+  return ( myDestY - myDestYMin ) / ( myDestYMax - myDestYMin );
+}
 
+bool ProjectorData::approximateSrcRowCol( int destCol, double yfrac, int *srcRow, int *srcCol )
+{
   const QgsPointXY &myTop = pHelperTop[destCol];
   const QgsPointXY &myBot = pHelperBottom[destCol];
 
@@ -883,17 +909,32 @@ QgsRasterBlock *QgsRasterProjector::block( int bandNo, QgsRectangle  const &exte
   // we cannot fill output block with no data because we use memcpy for data, not setValue().
   const bool doNoData = !QgsRasterBlock::typeIsNumeric( input->dataType() ) && input->hasNoData() && !input->hasNoDataValue();
 
+  // The data of both blocks is contiguous: get the pointers once, bits() and constBits() are
+  // too slow to be called for every cell (for image blocks they also check if the image is shared)
+  const char *srcData = input->constBits( 0 );
+  char *destData = output->bits( 0 );
+  if ( !srcData || !destData )
+  {
+    // nothing can be copied, everything is left set to no data
+    return outputBlock.release();
+  }
+  const qgssize srcSize = static_cast< qgssize >( input->width() ) * input->height();
+
   int srcRow, srcCol;
   for ( int i = 0; i < height; ++i )
   {
     if ( feedback && feedback->isCanceled() )
       break;
+
+    pd.prepareRow( i );
     for ( int j = 0; j < width; ++j )
     {
-      const bool inside = pd.srcRowCol( i, j, &srcRow, &srcCol );
+      const bool inside = pd.srcRowColInRow( j, &srcRow, &srcCol );
       if ( !inside ) continue; // we have everything set to no data
 
       const qgssize srcIndex = static_cast< qgssize >( srcRow ) * pd.srcCols() + srcCol;
+      if ( srcIndex >= srcSize )
+        continue;
 
       // isNoData() may be slow so we check doNoData first
       if ( doNoData && input->isNoData( srcRow, srcCol ) )
@@ -902,19 +943,7 @@ QgsRasterBlock *QgsRasterProjector::block( int bandNo, QgsRectangle  const &exte
       }
 
       const qgssize destIndex = static_cast< qgssize >( i ) * width + j;
-      const char *srcBits = input->constBits( srcIndex );
-      char *destBits = output->bits( destIndex );
-      if ( !srcBits )
-      {
-        // QgsDebugError( QStringLiteral( "Cannot get input block data: row = %1 col = %2" ).arg( i ).arg( j ) );
-        continue;
-      }
-      if ( !destBits )
-      {
-        // QgsDebugError( QStringLiteral( "Cannot set output block data: srcRow = %1 srcCol = %2" ).arg( srcRow ).arg( srcCol ) );
-        continue;
-      }
-      memcpy( destBits, srcBits, pixelSize );
+      memcpy( destData + destIndex * pixelSize, srcData + srcIndex * pixelSize, pixelSize );
       output->setIsData( i, j );
     }
   }
