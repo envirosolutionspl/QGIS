@@ -97,17 +97,16 @@ QgsSocketMonitoringThread::QgsSocketMonitoringThread( std::shared_ptr<QgsFeedbac
 // Informs the thread to quit
 void QgsSocketMonitoringThread::stop()
 {
-  mShouldStop.store( true );
-  // Release the mutex so the try_lock in the thread will not wait anymore and
-  // the thread will end its loop as we have set 'mShouldStop' to true
-  mMutex.unlock();
+  {
+    const std::lock_guard<std::mutex> lock( mMutex );
+    mShouldStop.store( true );
+  }
+  // Wake up the thread so that it ends its loop without waiting for the next check
+  mCondition.notify_one();
 }
 
 void QgsSocketMonitoringThread::run()
 {
-  // Lock the thread mutex: every try_lock will take 333ms
-  mMutex.lock();
-
   if ( mIpcFd < 0 )
   {
     QgsMessageLog::logMessage( QStringLiteral( "Socket monitoring disabled: no socket fd!" ), QStringLiteral( "FCGIServer" ), Qgis::MessageLevel::Warning );
@@ -119,18 +118,21 @@ void QgsSocketMonitoringThread::run()
 
   char c;
 
-  fd_set setOptions;
-  FD_ZERO( &setOptions );        // clear the set
-  FD_SET( mIpcFd, &setOptions ); // add our file descriptor to the set
-
-  struct timeval timeout;
-  timeout.tv_sec = 0;
-  timeout.tv_usec = 10000; // max 10ms of timeout for select
-
   while ( !mShouldStop.load() )
   {
-    // 'select' function will check if the socket is still valid after a 10ms timeout
+    // 'select' modifies its arguments, they need to be set again before each call
+    fd_set setOptions;
+    FD_ZERO( &setOptions );        // clear the set
+    FD_SET( mIpcFd, &setOptions ); // add our file descriptor to the set
+
+    // No timeout: 'select' only checks if the socket is still valid. Waiting here would
+    // delay the end of every request shorter than the timeout, because the response
+    // joins this thread when it is destroyed.
     // see https://stackoverflow.com/a/30395738
+    struct timeval timeout;
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 0;
+
     int rv = select( mIpcFd + 1, &setOptions, NULL, NULL, &timeout );
     if ( rv == -1 )
     {
@@ -169,10 +171,10 @@ void QgsSocketMonitoringThread::run()
       }
     }
 
-    // If lock is acquired this means the response has finished and we will exit the while loop
-    // else we will wait max for 333ms.
-    if ( mMutex.try_lock_for( 333ms ) )
-      mMutex.unlock();
+    // Wait max for 333ms before the next check. The wait ends at once when the
+    // response has finished.
+    std::unique_lock<std::mutex> lock( mMutex );
+    mCondition.wait_for( lock, 333ms, [this] { return mShouldStop.load(); } );
   }
 
   if ( mShouldStop.load() )
