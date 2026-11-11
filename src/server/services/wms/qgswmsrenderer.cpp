@@ -2860,13 +2860,44 @@ namespace QgsWms
         QMap<QgsFeatureId, QString> fidMap;
         QMap<QgsFeatureId, QString> fidDisplayNameMap;
 
+        // Get the features with a single request: a request for every feature is a round trip
+        // to the data source for every feature
+        QHash<QString, QgsFeature> featuresByServerFid;
+        if ( featuresNode.size() > 1 )
+        {
+          const QgsVectorDataProvider *provider = static_cast<QgsVectorDataProvider *>( layer->dataProvider() );
+          const QgsAttributeList pkAttributes = provider->pkAttributeIndexes();
+          QStringList serverFids;
+          for ( int j = 0; j < featuresNode.size(); ++j )
+          {
+            serverFids << featuresNode.at( j ).toElement().attribute( QStringLiteral( "id" ) );
+          }
+          QgsFeatureRequest request;
+          QgsServerFeatureId::updateFeatureRequestFromServerFids( request, serverFids, provider );
+          // as in the requests for a single feature below
+          if ( !pkAttributes.isEmpty() )
+            request.setFlags( Qgis::FeatureRequestFlag::NoGeometry );
+          QgsFeature fetchedFeature;
+          QgsFeatureIterator it = vl->getFeatures( request );
+          while ( it.nextFeature( fetchedFeature ) )
+          {
+            const QString serverFid = QgsServerFeatureId::getServerFid( fetchedFeature, pkAttributes );
+            if ( !featuresByServerFid.contains( serverFid ) )
+              featuresByServerFid.insert( serverFid, fetchedFeature );
+          }
+        }
+
         for ( int j = 0; j < featuresNode.size(); ++j )
         {
           const QDomElement featureNode = featuresNode.at( j ).toElement();
           const QString fid = featureNode.attribute( QStringLiteral( "id" ) );
           QgsFeature feature;
           const QString expression { QgsServerFeatureId::getExpressionFromServerFid( fid, static_cast<QgsVectorDataProvider *>( layer->dataProvider() ) ) };
-          if ( expression.isEmpty() )
+          if ( featuresByServerFid.contains( fid ) )
+          {
+            feature = featuresByServerFid.value( fid );
+          }
+          else if ( expression.isEmpty() )
           {
             feature = vl->getFeature( fid.toLongLong() );
           }
