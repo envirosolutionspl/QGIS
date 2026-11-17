@@ -34,6 +34,7 @@
 
 #include <algorithm>
 #include <png.h>
+#include <zlib.h>
 
 using namespace Qt::StringLiterals;
 
@@ -76,6 +77,39 @@ namespace
       total += width - 1;
     }
     return flat * 3 < total ? PNG_FILTER_UP : PNG_FILTER_NONE;
+  }
+
+  /**
+   * Returns TRUE if a 32 bits \a image is almost only made of runs of equal bytes, which
+   * is the case of an empty or nearly empty map, transparent or on a white or grey background.
+   *
+   * With a low deflate level such runs take several times more room than needed, unless
+   * the run-length strategy of zlib is used. That strategy gives larger files for any
+   * other content. One row out of 8 is examined.
+   */
+  bool pngMostlyRuns( const QImage &image, bool hasAlpha )
+  {
+    const int width = image.width();
+    const int height = image.height();
+    // the bytes written for a pixel: all of them, or the colors only
+    const QRgb mask = hasAlpha ? 0xffffffffu : 0x00ffffffu;
+    const QRgb ones = hasAlpha ? 0x01010101u : 0x00010101u;
+    // with more than one pixel out of 200 breaking a run, the default strategy does as well
+    const qint64 maxBreaks = static_cast<qint64>( width ) * ( ( height + 7 ) / 8 ) / 200;
+    qint64 breaks = 0;
+    for ( int y = 0; y < height; y += 8 )
+    {
+      const QRgb *row = reinterpret_cast<const QRgb *>( image.constScanLine( y ) );
+      for ( int x = 0; x < width; ++x )
+      {
+        const QRgb pixel = row[x] & mask;
+        if ( pixel != ( pixel & 0xff ) * ones || ( x > 0 && pixel != ( row[x - 1] & mask ) ) )
+          ++breaks;
+      }
+      if ( breaks > maxBreaks )
+        return false;
+    }
+    return true;
   }
 
   /**
@@ -131,6 +165,8 @@ namespace
 
     png_set_write_fn( png, device, pngWriteCallback, pngFlushCallback );
     png_set_compression_level( png, 2 );
+    if ( rowFilter == PNG_FILTER_NONE && pngMostlyRuns( image, hasAlpha ) )
+      png_set_compression_strategy( png, Z_RLE );
     png_set_filter( png, PNG_FILTER_TYPE_BASE, rowFilter );
     png_set_IHDR( png, info, static_cast<png_uint_32>( image.width() ), static_cast<png_uint_32>( image.height() ), 8, hasAlpha ? PNG_COLOR_TYPE_RGB_ALPHA : PNG_COLOR_TYPE_RGB, PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT );
     if ( image.dotsPerMeterX() > 0 || image.dotsPerMeterY() > 0 )
