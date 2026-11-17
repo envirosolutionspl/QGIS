@@ -57,14 +57,20 @@ void TestQgsServerWmsUtils::writeImage_png_data()
   QTest::addColumn<int>( "width" );
   QTest::addColumn<int>( "height" );
   QTest::addColumn<bool>( "continuousTone" );
+  QTest::addColumn<int>( "shapes" );
+  QTest::addColumn<int>( "maximumSize" );
 
-  QTest::newRow( "opaque" ) << static_cast<int>( QImage::Format_RGB32 ) << 301 << 157 << false;
-  QTest::newRow( "alpha" ) << static_cast<int>( QImage::Format_ARGB32 ) << 301 << 157 << false;
-  QTest::newRow( "premultiplied alpha" ) << static_cast<int>( QImage::Format_ARGB32_Premultiplied ) << 301 << 157 << false;
-  QTest::newRow( "one pixel" ) << static_cast<int>( QImage::Format_ARGB32_Premultiplied ) << 1 << 1 << false;
+  QTest::newRow( "opaque" ) << static_cast<int>( QImage::Format_RGB32 ) << 301 << 157 << false << 3 << 0;
+  QTest::newRow( "alpha" ) << static_cast<int>( QImage::Format_ARGB32 ) << 301 << 157 << false << 3 << 0;
+  QTest::newRow( "premultiplied alpha" ) << static_cast<int>( QImage::Format_ARGB32_Premultiplied ) << 301 << 157 << false << 3 << 0;
+  QTest::newRow( "one pixel" ) << static_cast<int>( QImage::Format_ARGB32_Premultiplied ) << 1 << 1 << false << 3 << 0;
   // images without flat areas are written with another row filter
-  QTest::newRow( "opaque continuous tone" ) << static_cast<int>( QImage::Format_RGB32 ) << 301 << 157 << true;
-  QTest::newRow( "premultiplied alpha continuous tone" ) << static_cast<int>( QImage::Format_ARGB32_Premultiplied ) << 301 << 157 << true;
+  QTest::newRow( "opaque continuous tone" ) << static_cast<int>( QImage::Format_RGB32 ) << 301 << 157 << true << 3 << 0;
+  QTest::newRow( "premultiplied alpha continuous tone" ) << static_cast<int>( QImage::Format_ARGB32_Premultiplied ) << 301 << 157 << true << 3 << 0;
+  // empty and nearly empty images are written with another deflate strategy, which keeps them small
+  QTest::newRow( "opaque empty" ) << static_cast<int>( QImage::Format_RGB32 ) << 1920 << 1080 << false << 0 << 10000;
+  QTest::newRow( "premultiplied alpha empty" ) << static_cast<int>( QImage::Format_ARGB32_Premultiplied ) << 1920 << 1080 << false << 0 << 10000;
+  QTest::newRow( "premultiplied alpha nearly empty" ) << static_cast<int>( QImage::Format_ARGB32_Premultiplied ) << 1920 << 1080 << false << 1 << 40000;
 }
 
 void TestQgsServerWmsUtils::writeImage_png()
@@ -73,8 +79,11 @@ void TestQgsServerWmsUtils::writeImage_png()
   QFETCH( int, width );
   QFETCH( int, height );
   QFETCH( bool, continuousTone );
+  QFETCH( int, shapes );
+  QFETCH( int, maximumSize );
 
-  // an image with flat areas, gradients, antialiased edges and partial transparency
+  // an image with flat areas, gradients, antialiased edges and partial transparency,
+  // or with a line only, or with nothing
   QImage image( width, height, static_cast<QImage::Format>( format ) );
   image.fill( QColor( 255, 255, 255, 0 ) );
   if ( continuousTone )
@@ -86,17 +95,24 @@ void TestQgsServerWmsUtils::writeImage_png()
         image.setPixelColor( x, y, QColor( ( x * 7 + y * 3 ) % 256, ( x * 5 + y * 11 ) % 256, ( x * 13 + y ) % 256, 255 - ( x + y ) % 100 ) );
     }
   }
+  if ( shapes > 0 )
   {
     QPainter painter( &image );
     painter.setRenderHint( QPainter::Antialiasing );
-    QLinearGradient gradient( 0, 0, width, height );
-    gradient.setColorAt( 0, QColor( 200, 30, 40, 255 ) );
-    gradient.setColorAt( 1, QColor( 20, 90, 220, 60 ) );
-    painter.fillRect( QRectF( 0, 0, width / 2.0, height ), gradient );
+    if ( shapes > 1 )
+    {
+      QLinearGradient gradient( 0, 0, width, height );
+      gradient.setColorAt( 0, QColor( 200, 30, 40, 255 ) );
+      gradient.setColorAt( 1, QColor( 20, 90, 220, 60 ) );
+      painter.fillRect( QRectF( 0, 0, width / 2.0, height ), gradient );
+    }
     painter.setPen( QPen( QColor( 10, 120, 30, 180 ), 2.5 ) );
     painter.drawLine( QPointF( 0.3, 0.7 ), QPointF( width - 0.4, height - 1.2 ) );
-    painter.setBrush( QColor( 250, 200, 0, 128 ) );
-    painter.drawEllipse( QRectF( width / 3.0, height / 4.0, width / 2.0, height / 2.0 ) );
+    if ( shapes > 1 )
+    {
+      painter.setBrush( QColor( 250, 200, 0, 128 ) );
+      painter.drawEllipse( QRectF( width / 3.0, height / 4.0, width / 2.0, height / 2.0 ) );
+    }
   }
   image.setDotsPerMeterX( 3780 );
   image.setDotsPerMeterY( 3543 );
@@ -109,6 +125,8 @@ void TestQgsServerWmsUtils::writeImage_png()
   response.flush();
   const QByteArray data = response.body();
   QVERIFY( data.startsWith( "\x89PNG" ) );
+  if ( maximumSize > 0 )
+    QVERIFY2( data.size() < maximumSize, qPrintable( QStringLiteral( "%1 bytes" ).arg( data.size() ) ) );
   const QImage decoded = QImage::fromData( data, "PNG" );
   QVERIFY( !decoded.isNull() );
 
