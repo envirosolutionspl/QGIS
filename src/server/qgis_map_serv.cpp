@@ -30,6 +30,7 @@
 #include "qgssettingsentry.h"
 
 #include <QFontDatabase>
+#include <QImage>
 #include <QString>
 
 #include <fcgi_stdio.h>
@@ -96,6 +97,14 @@ int main( int argc, char *argv[] )
   // When using FCGI with IIS, environment variables (QT_QPA_FONTDIR in this case) are lost after fcgi_accept().
   QFontDatabase fontDB;
 #endif
+
+  // Qt reads QT_NO_GUI_THREADPOOL when its GUI thread pool is first used, which would be during the first
+  // request, after fcgi_accept() has replaced the environment: use it once now so that the variable is seen
+  // (this conversion goes through the generic converter, which asks for the pool whatever the image size).
+  if ( qEnvironmentVariableIsSet( "QT_NO_GUI_THREADPOOL" ) )
+  {
+    QImage( 1, 1, QImage::Format_ARGB32 ).convertToFormat( QImage::Format_RGB16 );
+  }
 
   // Starts FCGI loop
   while ( fcgi_accept() >= 0 )
